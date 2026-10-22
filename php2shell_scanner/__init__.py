@@ -8,4 +8,4 @@ Author: Evil0ctal - https://github.com/Evil0ctal/php2shell-scanner
 For use on systems you own or are authorised to test only.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
