@@ -29,6 +29,18 @@
 
 ## 快速开始
 
+从 [Releases](https://github.com/Evil0ctal/php2shell-scanner/releases) 下载单文件版本
+（无需安装，只要 Python 3.6.1+）：
+
+```bash
+curl -fLO https://github.com/Evil0ctal/php2shell-scanner/releases/latest/download/php2shell-scanner.pyz
+curl -fLO https://github.com/Evil0ctal/php2shell-scanner/releases/latest/download/php2shell-scanner.pyz.sha256
+sha256sum -c php2shell-scanner.pyz.sha256
+sudo python3 php2shell-scanner.pyz forensics          # 或：python3 php2shell-scanner.pyz scan <目标>
+```
+
+也可以从源码构建：
+
 ```bash
 git clone https://github.com/Evil0ctal/php2shell-scanner && cd php2shell-scanner
 ./build_pyz.sh                              # 生成 dist/php2shell-scanner.pyz（单文件）

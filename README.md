@@ -30,6 +30,18 @@ Repository: <https://github.com/Evil0ctal/php2shell-scanner> · License: [MIT](L
 
 ## Quick start
 
+Download the single-file build from [Releases](https://github.com/Evil0ctal/php2shell-scanner/releases)
+(no installation, only Python 3.6.1+ is needed):
+
+```bash
+curl -fLO https://github.com/Evil0ctal/php2shell-scanner/releases/latest/download/php2shell-scanner.pyz
+curl -fLO https://github.com/Evil0ctal/php2shell-scanner/releases/latest/download/php2shell-scanner.pyz.sha256
+sha256sum -c php2shell-scanner.pyz.sha256
+sudo python3 php2shell-scanner.pyz forensics          # or: python3 php2shell-scanner.pyz scan <target>
+```
+
+Or build it from source:
+
 ```bash
 git clone https://github.com/Evil0ctal/php2shell-scanner && cd php2shell-scanner
 ./build_pyz.sh                              # -> dist/php2shell-scanner.pyz (single file)
