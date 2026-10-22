@@ -46,7 +46,9 @@ SSHD_PROGRAMS = frozenset(("sshd", "sshd-session"))
 PRIV_GROUPS = frozenset(("sudo", "wheel", "admin", "root", "docker", "lxd", "adm", "disk"))
 BRUTE_THRESHOLD = 20
 BRUTE_WINDOW = 3600          # failures must precede the successful login within this window
-NOLOGIN = re.compile(r"(?:nologin|/false|/sync)$")
+# Exact paths only: "/tmp/x-nologin" must not pass for a disabled shell.
+NOLOGIN_SHELLS = frozenset(("/usr/sbin/nologin", "/sbin/nologin", "/usr/bin/nologin",
+                            "/bin/false", "/usr/bin/false", "/bin/sync"))
 SHELL_FIELD = re.compile(r"\bshell=([^,\s]{1,128})")
 TRIGGERS = ("Accepted ", "Failed ", "Invalid user", "sudo", "session opened", "su:", "su[",
             "useradd", "usermod", "gpasswd")
@@ -122,7 +124,7 @@ def _login(state: State, disc: Discovery, path: str, line: str, msg: str, when: 
     state.login_times[key] = (first, when)
     if user in disc.web_users:
         account = next((u for u in disc.users if u.name == user), None)
-        locked = account is None or not account.shell or NOLOGIN.search(account.shell)
+        locked = account is None or not account.shell or account.shell in NOLOGIN_SHELLS
         _event(state, "AUTH-WEBUSER-LOGIN", Severity.CRITICAL if locked else Severity.MEDIUM,
                Kind.COMPROMISE, "SSH login as web user '{}' from {}".format(user, ip), path, line,
                "This account has no login shell: someone planted a key or changed its shell."
@@ -150,7 +152,11 @@ def _privilege(state: State, disc: Discovery, path: str, line: str, prog: str,
     added = USERADD.match(msg) if prog == "useradd" else None
     if added:
         shell = SHELL_FIELD.search(msg)
-        service = bool(shell and NOLOGIN.search(shell.group(1)))
+        current = next((u.shell for u in disc.users if u.name == added.group(1)), None)
+        # A service account must have been created without a login shell AND still have
+        # none (usermod -s /bin/bash afterwards turns it into a login account).
+        service = bool(shell and shell.group(1) in NOLOGIN_SHELLS
+                       and (current is None or current in NOLOGIN_SHELLS))
         uid0 = added.group(2) == "0"
         severity = Severity.HIGH if uid0 else (Severity.LOW if service else Severity.MEDIUM)
         _event(state, "AUTH-NEW-ACCOUNT", severity, Kind.COMPROMISE,

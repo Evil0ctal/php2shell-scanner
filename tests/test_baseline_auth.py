@@ -1,4 +1,5 @@
 """Security baseline and auth-log checks."""
+import pytest
 
 import json
 
@@ -229,3 +230,20 @@ def test_ufw_allow_rules_parsing(monkeypatch, tree, scan_env):
     ctx, disc = scan_env()
     monkeypatch.setattr(type(ctx), "live", property(lambda self: True))
     assert baseline.open_ports(ctx) == {6379}
+
+
+@pytest.mark.parametrize("logged_shell, passwd_shell, expected", [
+    ("/sbin/nologin", None, Severity.LOW),
+    ("/tmp/backdoor-nologin", None, Severity.MEDIUM),        # look-alike path
+    ("/sbin/nologin", "/bin/bash", Severity.MEDIUM),         # shell changed afterwards
+])
+def test_service_account_downgrade_is_strict(tree, scan_env, logged_shell, passwd_shell, expected):
+    if passwd_shell:
+        tree.write("/etc/passwd", open(tree.path("/etc/passwd")).read()
+                   + "svc:x:1500:1500::/home/svc:{}\n".format(passwd_shell))
+    tree.write("/var/log/auth.log", "2026-10-21T09:00:00.0+00:00 web useradd[1]: new user: "
+               "name=svc, UID=1500, GID=1500, home=/home/svc, shell={}, from=none\n"
+               .format(logged_shell))
+    ctx, disc = scan_env()
+    found = [f for f in auth_logs.run(ctx, disc) if f.rule == "AUTH-NEW-ACCOUNT"]
+    assert [f.severity for f in found] == [expected]
