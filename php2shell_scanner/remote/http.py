@@ -19,6 +19,7 @@ USER_AGENT = ("php2shell-scanner/{} (+https://github.com/Evil0ctal/php2shell-sca
 MAX_BODY = 512 * 1024
 READ_CHUNK = 8 * 1024
 REQUEST_DEADLINE_FACTOR = 3     # total time per request = 3 x --timeout
+MIN_REQUEST_BUDGET = 0.5        # do not start a request that cannot finish in time
 
 
 class Response(NamedTuple):
@@ -123,12 +124,20 @@ class Client:
         # Socket timeouts bound each recv, not the exchange: a server trickling its status
         # line/headers one byte at a time would otherwise hold us for days. The watchdog
         # shuts the socket down at the deadline, which unblocks any pending read.
-        budget = min(self.timeout * REQUEST_DEADLINE_FACTOR, max(0.0, self.deadline - started))
+        budget = min(self.timeout * REQUEST_DEADLINE_FACTOR, self.deadline - started)
+        if budget < MIN_REQUEST_BUDGET:
+            conn.close()
+            self.budget_exhausted = True
+            return Response(0, "", (), b"", 0.0, "per-target time budget exhausted")
         expired = threading.Event()
         watchdog = threading.Timer(budget, _shutdown, args=(conn, expired))
         watchdog.daemon = True
         watchdog.start()
         try:
+            conn.connect()
+            if expired.is_set():   # the watchdog fired while there was no socket to close
+                return Response(0, "", (), b"", time.time() - started,
+                                "request deadline exceeded during connect")
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
             data = self._read_body(resp, started) if method != "HEAD" else b""

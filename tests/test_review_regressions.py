@@ -359,3 +359,14 @@ def test_hostile_filesmatch_selector_fails_closed_quickly(tree, scan_env):
     found = [f for f in webroot.run(ctx, disc) if f.rule == "WEB-HTACCESS-HANDLER"]
     assert _time.time() - started < 2
     assert found                       # reported, not silently trusted
+
+
+def test_many_adjacent_quantifiers_fail_closed_quickly(tree, scan_env):
+    import time as _time
+    evil = ".*" * 50 + "z"
+    tree.write("/var/www/html/v/.htaccess",
+               '<FilesMatch "{}">\nSetHandler application/x-httpd-php\n</FilesMatch>\n'.format(evil))
+    ctx, disc = scan_env()
+    started = _time.time()
+    found = [f for f in webroot.run(ctx, disc) if f.rule == "WEB-HTACCESS-HANDLER"]
+    assert _time.time() - started < 2 and found

@@ -392,3 +392,30 @@ def test_trickled_headers_and_body_are_bounded():
         Client(target, timeout=1, delay=0).request("GET", "/")
         assert _time.time() - started < 5      # 3 x timeout, not minutes
         listener.close()
+
+
+def test_watchdog_firing_during_connect_still_aborts(monkeypatch):
+    from php2shell_scanner.remote import http as rhttp
+    import time as _time
+    original = rhttp.http.client.HTTPConnection.connect
+
+    def slow_connect(self):
+        _time.sleep(1.2)            # longer than the 1s request budget below
+        return original(self)
+
+    srv = ThreadingServer(("127.0.0.1", 0), Handler)
+    srv.behavior, srv.requests = {}, []
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setattr(rhttp.http.client.HTTPConnection, "connect", slow_connect)
+    monkeypatch.setattr(rhttp, "REQUEST_DEADLINE_FACTOR", 1)
+    target = parse_target("http://127.0.0.1:{}/".format(srv.server_address[1]))[0]
+    response = Client(target, timeout=1, delay=0).request("GET", "/")
+    srv.shutdown()
+    srv.server_close()
+    assert "deadline exceeded during connect" in response.error
+
+
+def test_no_request_started_without_budget():
+    target = parse_target("http://127.0.0.1:9/")[0]
+    client = Client(target, timeout=5, delay=0, budget=0.2)
+    assert "budget" in client.request("GET", "/").error

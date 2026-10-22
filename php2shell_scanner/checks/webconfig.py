@@ -33,6 +33,10 @@ NON_SCRIPT_SAMPLES = tuple("{}.{}".format(stem, ext)
                            for ext in ("jpg", "png", "gif", "ico", "txt", "svg", "zip", "pdf"))
 MAX_SELECTOR = 120
 UNSAFE_SELECTOR = re.compile(r"\)[*+{]|\\[1-9]|\(\?[<=!P]")
+# Legitimate selectors use at most one quantifier (".+\.ph(ar|p|tml)$"); with <= 3 the
+# match against ~12-character sample names stays a few thousand steps at worst.
+QUANTIFIER = re.compile(r"[*+?]|\{\d")
+MAX_QUANTIFIERS = 3
 LEGACY_PHP_EXTENSIONS = frozenset((".html", ".htm", ".shtml", ".tpl", ".phtm"))
 
 
@@ -77,7 +81,8 @@ def _block_hits_non_script(regex_mode: bool, pattern: bytes) -> bool:
     # The selector comes from a file an attacker may control. Python's regex engine
     # backtracks, so never run shapes that can explode (a quantified group, a back-
     # reference or a very long pattern): fail closed and report the block instead.
-    if len(text) > MAX_SELECTOR or UNSAFE_SELECTOR.search(text):
+    if len(text) > MAX_SELECTOR or UNSAFE_SELECTOR.search(text) \
+            or len(QUANTIFIER.findall(text)) > MAX_QUANTIFIERS:
         return True
     try:
         selector = re.compile(text, re.I)
