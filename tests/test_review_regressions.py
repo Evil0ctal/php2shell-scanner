@@ -370,3 +370,26 @@ def test_many_adjacent_quantifiers_fail_closed_quickly(tree, scan_env):
     started = _time.time()
     found = [f for f in webroot.run(ctx, disc) if f.rule == "WEB-HTACCESS-HANDLER"]
     assert _time.time() - started < 2 and found
+
+
+@pytest.mark.parametrize("selector", [".{,9}.{,9}.{,9}.{,9}x", "(?x)(.*) * z", "(a)?(b)?(c)?(d)?"])
+def test_selector_filter_counts_every_quantifier_form(selector):
+    from php2shell_scanner.checks.webconfig import _block_hits_non_script
+    assert _block_hits_non_script(True, selector.encode()) is True   # fails closed
+
+
+def test_selector_filter_fuzz_has_bounded_worst_case():
+    """Random selectors that pass the filter must all match the samples quickly."""
+    import random
+    import time as _time
+    from php2shell_scanner.checks import webconfig
+    atoms = [".", "*", "+", "?", "(", ")", "|", "a", "x", "\\.", "jpg", "{1,9}", "{,5}",
+             "[a-z]", "[^/]", "(?:", "^", "$", "\\w", "\\d"]
+    rng = random.Random(1337)
+    worst = 0.0
+    for _ in range(3000):
+        text = "".join(rng.choice(atoms) for _ in range(rng.randint(1, 30)))
+        started = _time.time()
+        webconfig._block_hits_non_script(True, text.encode())
+        worst = max(worst, _time.time() - started)
+    assert worst < 0.25

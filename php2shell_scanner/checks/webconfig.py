@@ -32,10 +32,14 @@ NON_SCRIPT_SAMPLES = tuple("{}.{}".format(stem, ext)
                            for stem in ("x", "upload", "image", "avatar", "shell", "index")
                            for ext in ("jpg", "png", "gif", "ico", "txt", "svg", "zip", "pdf"))
 MAX_SELECTOR = 120
-UNSAFE_SELECTOR = re.compile(r"\)[*+{]|\\[1-9]|\(\?[<=!P]")
-# Legitimate selectors use at most one quantifier (".+\.ph(ar|p|tml)$"); with <= 3 the
-# match against ~12-character sample names stays a few thousand steps at worst.
-QUANTIFIER = re.compile(r"[*+?]|\{\d")
+# Rejected outright: a quantified group (also with whitespace before the quantifier),
+# backreferences, and every "(?" construct except "(?:" - inline flags such as (?x)
+# would otherwise let whitespace separate a group from its quantifier.
+UNSAFE_SELECTOR = re.compile(r"\)\s*[*+?{]|\\[1-9]|\(\?(?!:)")
+# Every "*", "+", "?" and "{" counts (including "{,n}" and the "?" of "(?:"). Legitimate
+# selectors use at most one (".+\.ph(ar|p|tml)$"); with <= 3 the match against
+# ~12-character sample names stays a few thousand steps at worst.
+QUANTIFIER = re.compile(r"[*+?{]")
 MAX_QUANTIFIERS = 3
 LEGACY_PHP_EXTENSIONS = frozenset((".html", ".htm", ".shtml", ".tpl", ".phtm"))
 
