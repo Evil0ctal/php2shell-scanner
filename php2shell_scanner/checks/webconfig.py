@@ -31,6 +31,8 @@ EXEC_HANDLER_WORDS = (b"php", b"cgi", b"fcgid", b"perl", b"python")
 NON_SCRIPT_SAMPLES = tuple("{}.{}".format(stem, ext)
                            for stem in ("x", "upload", "image", "avatar", "shell", "index")
                            for ext in ("jpg", "png", "gif", "ico", "txt", "svg", "zip", "pdf"))
+MAX_SELECTOR = 120
+UNSAFE_SELECTOR = re.compile(r"\)[*+{]|\\[1-9]|\(\?[<=!P]")
 LEGACY_PHP_EXTENSIONS = frozenset((".html", ".htm", ".shtml", ".tpl", ".phtm"))
 
 
@@ -72,6 +74,11 @@ def _block_hits_non_script(regex_mode: bool, pattern: bytes) -> bool:
     text = pattern.decode("latin-1").strip().strip("\"'")
     if not regex_mode:
         return any(fnmatch.fnmatch(name, text) for name in NON_SCRIPT_SAMPLES)
+    # The selector comes from a file an attacker may control. Python's regex engine
+    # backtracks, so never run shapes that can explode (a quantified group, a back-
+    # reference or a very long pattern): fail closed and report the block instead.
+    if len(text) > MAX_SELECTOR or UNSAFE_SELECTOR.search(text):
+        return True
     try:
         selector = re.compile(text, re.I)
     except re.error:

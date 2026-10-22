@@ -347,3 +347,15 @@ def test_report_write_refuses_symlink_and_never_overwrites(tmp_path):
     existing.chmod(0o666)
     write_private(str(existing), "new")
     assert oct(existing.stat().st_mode & 0o777) == "0o600"
+
+
+def test_hostile_filesmatch_selector_fails_closed_quickly(tree, scan_env):
+    import time as _time
+    evil = "((((((.*)*)*)*)*)*)*z"
+    tree.write("/var/www/html/u/.htaccess",
+               '<FilesMatch "{}">\nSetHandler application/x-httpd-php\n</FilesMatch>\n'.format(evil))
+    ctx, disc = scan_env()
+    started = _time.time()
+    found = [f for f in webroot.run(ctx, disc) if f.rule == "WEB-HTACCESS-HANDLER"]
+    assert _time.time() - started < 2
+    assert found                       # reported, not silently trusted

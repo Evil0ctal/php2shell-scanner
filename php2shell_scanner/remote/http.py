@@ -120,6 +120,14 @@ class Client:
     def _send(self, method: str, path: str, headers: Dict[str, str], body: Optional[bytes],
               started: float) -> Response:
         conn = self._connection()
+        # Socket timeouts bound each recv, not the exchange: a server trickling its status
+        # line/headers one byte at a time would otherwise hold us for days. The watchdog
+        # shuts the socket down at the deadline, which unblocks any pending read.
+        budget = min(self.timeout * REQUEST_DEADLINE_FACTOR, max(0.0, self.deadline - started))
+        expired = threading.Event()
+        watchdog = threading.Timer(budget, _shutdown, args=(conn, expired))
+        watchdog.daemon = True
+        watchdog.start()
         try:
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
@@ -128,7 +136,13 @@ class Client:
                             time.time() - started)
         except socket.timeout:
             return Response(0, "", (), b"", time.time() - started, "timeout")
+        except (OSError, http.client.HTTPException) as exc:
+            if expired.is_set():
+                return Response(0, "", (), b"", time.time() - started,
+                                "request deadline exceeded ({:.0f}s)".format(budget))
+            raise exc
         finally:
+            watchdog.cancel()
             conn.close()
 
     def _read_body(self, resp: http.client.HTTPResponse, started: float) -> bytes:
@@ -144,6 +158,16 @@ class Client:
             chunks.append(chunk)
             size += len(chunk)
         return b"".join(chunks)
+
+
+def _shutdown(conn: http.client.HTTPConnection, expired: threading.Event) -> None:
+    expired.set()
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 def multipart(fields: List[Tuple[str, str]], files: List[Tuple[str, str, bytes]],

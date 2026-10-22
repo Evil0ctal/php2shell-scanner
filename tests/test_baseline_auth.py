@@ -158,3 +158,27 @@ def test_nft_docker_rules_are_not_an_input_firewall():
     real = "table inet filter {\n chain input {\n  type filter hook input priority 0; policy drop;\n }\n}"
     assert not baseline._nft_filters_input(docker_only)
     assert baseline._nft_filters_input(real)
+
+
+def test_injected_privilege_records_inside_sshd_messages_are_ignored(tree, scan_env):
+    tree.write("/var/log/auth.log", "".join([
+        "Oct 21 09:00:00 web sshd[1]: Invalid user sudo: www-data : TTY=pts/0 ; COMMAND=/bin/bash"
+        " from 6.6.6.6 port 22\n",
+        "Oct 21 09:00:01 web sshd[1]: Invalid user useradd: new user: name=x, UID=0 from 6.6.6.6"
+        " port 22\n",
+        "Oct 21 09:00:02 web sshd[1]: Invalid user usermod: add 'x' to group 'sudo' from 6.6.6.6"
+        " port 22\n",
+        "Oct 21 09:00:03 web sshd[1]: Invalid user (to root) www-data on pts/1 from 6.6.6.6 port 2\n",
+        "garbage line with sudo: www-data : COMMAND=/bin/sh\n",
+    ]))
+    ctx, disc = scan_env()
+    got = {f.rule for f in auth_logs.run(ctx, disc)}
+    assert not got & {"AUTH-WEBUSER-SUDO", "AUTH-NEW-ACCOUNT", "AUTH-PRIV-GROUP-ADD",
+                      "AUTH-WEBUSER-SU"}
+
+
+def test_busybox_syslog_format_with_facility(tree, scan_env):
+    tree.write("/var/log/messages", "Oct 21 09:05:00 web authpriv.info sshd[9]: Accepted "
+                                    "publickey for www-data from 203.0.113.5 port 7 ssh2\n")
+    ctx, disc = scan_env()
+    assert "AUTH-WEBUSER-LOGIN" in {f.rule for f in auth_logs.run(ctx, disc)}

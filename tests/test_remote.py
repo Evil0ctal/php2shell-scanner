@@ -363,3 +363,32 @@ def test_distro_token_only_in_server_header_stays_vulnerable_with_caveat(server)
     result = scan(server)
     assert result.status == v.VULNERABLE and result.confidence == "medium"
     assert any("confirm the vendor's fix status" in r for r in result.reasons)
+
+
+def test_trickled_headers_and_body_are_bounded():
+    import socket as _socket
+    import time as _time
+
+    def serve(listener, payload):
+        conn, _ = listener.accept()
+        conn.recv(4096)
+        try:
+            for byte in payload:
+                conn.sendall(bytes([byte]))
+                _time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    for payload in (b"HTTP/1.1 200 OK\r\nX-Powered-By: PHP/8.2.1\r\n" + b"X-Pad: " + b"a" * 500,
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 9999\r\n\r\n" + b"a" * 500):
+        listener = _socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        threading.Thread(target=serve, args=(listener, payload), daemon=True).start()
+        target = parse_target("http://127.0.0.1:{}/".format(listener.getsockname()[1]))[0]
+        started = _time.time()
+        Client(target, timeout=1, delay=0).request("GET", "/")
+        assert _time.time() - started < 5      # 3 x timeout, not minutes
+        listener.close()
