@@ -33,8 +33,11 @@ def test_ssh_config_first_value_wins_and_includes(tree, scan_env):
     tree.write("/etc/ssh/sshd_config.d/50-cloud.conf", "PasswordAuthentication no\n")
     ctx, disc = scan_env()
     got = rules(baseline.run(ctx, disc))
-    assert {"BASE-SSH-ROOT-LOGIN", "BASE-SSH-EMPTY-PASSWORDS"} <= got
-    assert "BASE-SSH-PASSWORD-AUTH" not in got
+    assert "BASE-SSH-EMPTY-PASSWORDS" in got
+    # root login with keys only (passwords disabled in the drop-in) is not a password risk
+    assert not {"BASE-SSH-PASSWORD-AUTH", "BASE-SSH-ROOT-LOGIN"} & got
+    tree.write("/etc/ssh/sshd_config.d/50-cloud.conf", "PasswordAuthentication yes\n")
+    assert "BASE-SSH-ROOT-LOGIN" in rules(baseline.run(*scan_env()))
 
 
 def test_docker_api_and_redis_exposures(tree, scan_env):
@@ -182,3 +185,47 @@ def test_busybox_syslog_format_with_facility(tree, scan_env):
                                     "publickey for www-data from 203.0.113.5 port 7 ssh2\n")
     ctx, disc = scan_env()
     assert "AUTH-WEBUSER-LOGIN" in {f.rule for f in auth_logs.run(ctx, disc)}
+
+
+
+# --------------------------------------------- formats seen on a real Ubuntu 24.04 host
+REAL_AUTH = """\
+2026-10-21T22:54:18.554342-07:00 web sshd[1934866]: Accepted publickey for root from 76.217.54.191 port 59560 ssh2: ED25519 SHA256:NZYQyg5jsTn1PBYFkxSmkJha5oIXJqXxgwn4CTfAqaY
+2025-09-19T04:56:02.092694+00:00 web useradd[5553]: new user: name=www, UID=1000, GID=1000, home=/home/www, shell=/sbin/nologin, from=/dev/pts/0
+2025-09-19T04:57:00.000000+00:00 web useradd[5554]: new user: name=deploy, UID=1003, GID=1003, home=/home/deploy, shell=/bin/bash, from=/dev/pts/0
+"""
+
+
+def test_real_world_auth_formats(tree, scan_env):
+    tree.write("/var/log/auth.log", REAL_AUTH)
+    tree.write("/var/log/auth.log.2", REAL_AUTH)            # rotated copy repeating records
+    ctx, disc = scan_env()
+    found = auth_logs.run(ctx, disc)
+    logins = [f for f in found if f.rule == "AUTH-LOGINS"]
+    assert logins and "76.217.54.191" in logins[0].evidence  # publickey suffix understood
+    accounts = [f for f in found if f.rule == "AUTH-NEW-ACCOUNT"]
+    assert len(accounts) == 2                                 # deduplicated across files
+    by_name = {f.title.split("'")[1]: f.severity for f in accounts}
+    assert by_name == {"www": Severity.LOW, "deploy": Severity.MEDIUM}
+
+
+def test_recent_keys_are_a_review_item_with_fingerprints(tree, scan_env):
+    import time as _time
+    from php2shell_scanner.checks import accounts
+    tree.write("/root/.ssh/authorized_keys",
+               "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl me@mac\n")
+    ctx, disc = scan_env(since=_time.time() - 60)
+    recent = [f for f in accounts.run(ctx, disc) if f.rule == "ACCT-SSH-KEYS-RECENT"][0]
+    assert recent.severity == Severity.MEDIUM and "SHA256:" in recent.detail
+
+
+def test_ufw_allow_rules_parsing(monkeypatch, tree, scan_env):
+    status = ("Status: active\n\nTo                         Action      From\n"
+              "22/tcp                     ALLOW       Anywhere\n"
+              "6379/tcp                   ALLOW       Anywhere\n"
+              "39000:40000/tcp            ALLOW       Anywhere\n"
+              "Anywhere                   REJECT      1.2.3.4\n")
+    monkeypatch.setattr(baseline, "run_tool", lambda ctx, argv, timeout=0: (0, status))
+    ctx, disc = scan_env()
+    monkeypatch.setattr(type(ctx), "live", property(lambda self: True))
+    assert baseline.open_ports(ctx) == {6379}

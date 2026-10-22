@@ -67,6 +67,12 @@ class Tree:
 
 
 @pytest.fixture(autouse=True)
+def _no_renice(monkeypatch):
+    """forensics lowers its own priority; never renice the pytest process itself."""
+    monkeypatch.setattr("php2shell_scanner.forensics_cli.lower_priority", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def _isolated_cwd(tmp_path, monkeypatch):
     """Reports default to the current directory: keep them out of the repository."""
     work = tmp_path / "cwd"

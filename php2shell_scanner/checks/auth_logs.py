@@ -17,7 +17,10 @@ from php2shell_scanner.signatures import printable
 NAME = "auth"
 DESCRIPTION = "Auth logs: SSH logins, web-user sudo/su, brute force, new accounts"
 
-AUTH_GLOBS = ("/var/log/auth.log*", "/var/log/secure*", "/var/log/messages*")
+AUTH_GLOBS = ("/var/log/auth.log*", "/var/log/secure*")
+# Alpine/openSUSE/busybox log auth to the general syslog; it is large, so it is only read
+# when no dedicated auth log exists.
+FALLBACK_GLOBS = ("/var/log/messages*",)
 # Anchored on sshd's own message start and on the line end: usernames are attacker-chosen
 # ("Accepted password for www-data from ..." is a valid *username* in a failure line).
 # Every rule is applied to the MESSAGE of a line whose syslog header names the program
@@ -27,7 +30,8 @@ SYSLOG_LINE = re.compile(
     r"^(?P<time>[A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\S{8,32})"
     r"\s+\S{1,255}(?:\s+[a-z]{2,10}\.[a-z]{2,10})?\s+"           # host [busybox facility.level]
     r"(?P<prog>[\w.\-]{1,32})(?:\[\d{1,10}\])?:\s(?P<msg>.*)$")
-TAIL = r" from (\S{1,64}) port \d{1,5}(?: ssh\d)?\s*$"
+# OpenSSH appends ": ED25519 SHA256:<fp>" to publickey results.
+TAIL = r" from (\S{1,64}) port \d{1,5}(?: ssh\d)?(?:: [\w-]{1,40} \S{1,128})?\s*$"
 ACCEPTED = re.compile(r"^Accepted (password|publickey|keyboard-interactive/pam|hostbased"
                       r"|gssapi-with-mic) for (\S{1,64})" + TAIL)
 FAILED = re.compile(r"^(?:Failed \S{1,40} for (?:invalid user )?.{0,120}?|Invalid user "
@@ -43,6 +47,7 @@ PRIV_GROUPS = frozenset(("sudo", "wheel", "admin", "root", "docker", "lxd", "adm
 BRUTE_THRESHOLD = 20
 BRUTE_WINDOW = 3600          # failures must precede the successful login within this window
 NOLOGIN = re.compile(r"(?:nologin|/false|/sync)$")
+SHELL_FIELD = re.compile(r"\bshell=([^,\s]{1,128})")
 TRIGGERS = ("Accepted ", "Failed ", "Invalid user", "sudo", "session opened", "su:", "su[",
             "useradd", "usermod", "gpasswd")
 
@@ -60,6 +65,7 @@ class State:
         self.failed: Counter = Counter()
         self.failure_times: Dict[str, List[float]] = {}
         self.events: List[Finding] = []
+        self.seen_events: Set[Tuple[str, str]] = set()
         self.lines = 0
 
 
@@ -80,6 +86,10 @@ def rotation_key(path: str) -> Tuple[int, int, str]:
 
 def _event(state: State, rule: str, sev: Severity, kind: str, title: str, path: str,
            line: str, detail: str = "") -> None:
+    key = (rule, line)
+    if key in state.seen_events:        # rotated copies often repeat the same records
+        return
+    state.seen_events.add(key)
     state.events.append(Finding(NAME, rule, sev, kind, title, path, printable(line, 240), detail))
 
 
@@ -139,10 +149,14 @@ def _privilege(state: State, disc: Discovery, path: str, line: str, prog: str,
                    "Web user '{}' switched user with su".format(by), path, line)
     added = USERADD.match(msg) if prog == "useradd" else None
     if added:
+        shell = SHELL_FIELD.search(msg)
+        service = bool(shell and NOLOGIN.search(shell.group(1)))
         uid0 = added.group(2) == "0"
-        _event(state, "AUTH-NEW-ACCOUNT", Severity.HIGH if uid0 else Severity.MEDIUM,
-               Kind.COMPROMISE, "Account '{}' created (UID {})".format(*added.groups()), path,
-               line, "Confirm this account was created by an administrator.")
+        severity = Severity.HIGH if uid0 else (Severity.LOW if service else Severity.MEDIUM)
+        _event(state, "AUTH-NEW-ACCOUNT", severity, Kind.COMPROMISE,
+               "{} '{}' created (UID {})".format("Service account" if service and not uid0
+                                                else "Account", *added.groups()), path, line,
+               "Confirm this account was created by an administrator or a package.")
     group = GROUP_ADD.match(msg) if prog in ("usermod", "gpasswd") else None
     if group:
         user, name = (group.group(1), group.group(2)) if group.group(1) else group.group(3, 4)
@@ -208,6 +222,9 @@ def run(ctx: ScanContext, disc: Discovery) -> List[Finding]:
     files: Set[str] = set()
     for pattern in AUTH_GLOBS:
         files.update(p for p in ctx.fs.glob(pattern) if ctx.fs.isfile(p))
+    if not files:
+        for pattern in FALLBACK_GLOBS:
+            files.update(p for p in ctx.fs.glob(pattern) if ctx.fs.isfile(p))
     for path in sorted(files, key=rotation_key):
         try:
             for line in ctx.fs.iter_lines(path):

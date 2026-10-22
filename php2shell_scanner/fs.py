@@ -39,6 +39,7 @@ BLOCKED = "/.php2shell-scanner-blocked/path"  # returned for paths that would es
 O_NOATIME = getattr(os, "O_NOATIME", 0)
 O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+DROP_CACHE_MIN = 256 * 1024     # bytes read before we hint the kernel to drop the pages
 DECOMPRESS_ERRORS: tuple = (zlib.error,) + ((lzma.LZMAError,) if lzma is not None else ())
 READ_ERRORS: tuple = (OSError, EOFError, ValueError) + DECOMPRESS_ERRORS
 
@@ -189,7 +190,10 @@ class RootFS:
     def read_bytes(self, logical: str, limit: int) -> Optional[bytes]:
         try:
             with self.open_binary(logical) as handle:
-                return handle.read(limit)
+                data = handle.read(limit)
+                if len(data) >= DROP_CACHE_MIN:
+                    drop_cache(handle)
+                return data
         except (OSError, ValueError):
             return None
 
@@ -201,7 +205,9 @@ class RootFS:
                     return handle.read(chunk * 2)
                 head = handle.read(chunk)
                 handle.seek(max(size - chunk, chunk))
-                return head + b"\n" + handle.read(chunk)
+                tail = handle.read(chunk)
+                drop_cache(handle)
+                return head + b"\n" + tail
         except (OSError, ValueError):
             return None
 
@@ -235,6 +241,7 @@ class RootFS:
         except READ_ERRORS as exc:
             LOG.warning("stopped reading %s early: %s", logical, exc)
         finally:
+            drop_cache(raw)
             raw.close()
 
     # ---------------------------------------------------------------- walk
@@ -285,6 +292,18 @@ class RootFS:
                         stack.append((entry.path, depth + 1))
                 elif stat.S_ISREG(st.st_mode):
                     yield logical, st
+
+
+def drop_cache(handle: BinaryIO) -> None:
+    """Tell the kernel we will not re-read this file, so scanning gigabytes of logs does
+    not evict the page cache that databases and web servers rely on (clean pages only;
+    nothing is written and the files are untouched)."""
+    if not hasattr(os, "posix_fadvise"):
+        return
+    try:
+        os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 def _bounded_lines(text: io.TextIOWrapper, budget: Optional[int]) -> Iterator[str]:

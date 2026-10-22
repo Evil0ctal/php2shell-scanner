@@ -225,3 +225,12 @@ def test_apk_and_pacman_package_databases(tree, scan_env):
     ctx, disc = scan_env()
     assert php_remnants.apk_packages(ctx) == [("php82-fpm", "8.2.34-r0", "installed")]
     assert php_remnants.pacman_packages(ctx) == [("php", "8.3.20-1", "installed")]
+
+
+
+def test_generated_run_units_are_not_recent_persistence(tree, scan_env):
+    import time as _time
+    tree.write("/run/systemd/system/netplan-ovs-cleanup.service",
+               "[Service]\nExecStart=/usr/sbin/netplan apply --only-ovs-cleanup\n")
+    ctx, disc = scan_env(since=_time.time() - 60)
+    assert "PERSIST-UNIT-RECENT" not in rules(persistence.run(ctx, disc))

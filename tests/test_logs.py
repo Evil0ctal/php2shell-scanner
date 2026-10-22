@@ -211,3 +211,11 @@ def test_docker_json_logs_are_unwrapped(tree, scan_env):
                _json.dumps({"log": inner + "\n", "stream": "stdout"}) + "\n")
     ctx, disc = scan_env(extra_logs=("/var/lib/docker/containers/abc/abc-json.log",))
     assert "LOG-LFI-SESSION" in rules(logs.run(ctx, disc))
+
+
+
+def test_phpmyadmin_used_only_through_local_proxy_is_info():
+    lines = [access(ip="127.0.0.1", uri="/phpmyadmin_41a2/index.php?route=/sql&db=x")
+             for _ in range(3)]
+    _, by_rule = run_lines(lines)
+    assert by_rule["LOG-PMA-SQL-USAGE"].severity == Severity.INFO

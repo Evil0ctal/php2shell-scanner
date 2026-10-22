@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Set
 from php2shell_scanner.checks.common import basename_ext, file_meta, info
 from php2shell_scanner.checks.webconfig import CONFIG_NAMES, scan_config_file
 from php2shell_scanner.context import ScanContext
+from php2shell_scanner.fs import drop_cache
 from php2shell_scanner.models import Discovery, Finding, Kind, Severity
 from php2shell_scanner.signatures import Match, Signature, scan, snippet_around
 from php2shell_scanner.signatures import webshell as ws
@@ -133,6 +134,7 @@ def _content_matches(ctx: ScanContext, path: str, st: os.stat_result) -> List[Ma
                 for match in scan(ws.CONTENT_SIGNATURES, window) + _special_matches(window, 10**9):
                     matches.setdefault(match.signature.rule, match)
                 tail, scanned = chunk[-CHUNK_OVERLAP:], scanned + len(chunk)
+            drop_cache(handle)
     except (OSError, ValueError):
         return []
     return list(matches.values()) + _location_matches(path, b"(")

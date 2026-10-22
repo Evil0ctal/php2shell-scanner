@@ -175,6 +175,23 @@ lines cannot inject Markdown, HTML or terminal escape sequences.
 | `--no-exec` | never run an external program (dpkg, rpm, iptables, journalctl, php -v) |
 | `--min-severity`, `--max-per-rule`, `--max-file-size`, `--max-files` | output and limits |
 
+### Impact on production servers
+
+Forensics is designed to run on live production hosts:
+
+- **Read-only.** It never connects to MySQL/Redis or any other service, never takes locks,
+  never reads database table files, never modifies or executes anything it finds; the only
+  writes are its own report files.
+- **Polite by default.** It lowers itself to CPU nice 19 and the lowest best-effort IO
+  priority, and tells the kernel to drop the page cache of every large file it has read, so
+  scanning gigabytes of logs does not evict what your database and web server keep cached.
+  `--no-throttle` runs at full speed instead.
+- **Bounded.** Single-threaded (at most one CPU core), streaming reads with size caps;
+  memory stays in the tens of megabytes.
+- **Measured** on a 4 vCPU / 8 GB BT Panel production server with MySQL, Redis and nginx:
+  one core busy, 50 MB peak memory, no IO pressure, MySQL unaffected ). A complete scan of
+  its 272 log files and web roots took 29 seconds and read about 60 MB from disk.
+
 ### "I already removed PHP and phpMyAdmin — am I safe?"
 
 Not necessarily. Session files, web roots and logs usually stay behind (don't delete them

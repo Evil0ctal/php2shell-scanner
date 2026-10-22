@@ -1,5 +1,8 @@
 """Accounts and access: backdoor users, sudo rights, SSH keys planted by an attacker."""
 
+import base64
+import binascii
+import hashlib
 import os
 import re
 from typing import List
@@ -101,6 +104,17 @@ def check_sudoers(ctx: ScanContext, disc: Discovery) -> List[Finding]:
     return findings
 
 
+def fingerprint(line: str) -> str:
+    """OpenSSH-style SHA256 fingerprint of an authorized_keys line."""
+    found = KEY_LINE.search(line)
+    try:
+        blob = base64.b64decode(found.group(2)) if found else b""
+    except (ValueError, binascii.Error):
+        return "?"
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+    return "SHA256:" + digest
+
+
 def _key_findings(ctx: ScanContext, disc: Discovery, user_name: str, is_web: bool,
                   path: str) -> List[Finding]:
     text = ctx.fs.read_text(path, 512 * 1024) or ""
@@ -122,10 +136,13 @@ def _key_findings(ctx: ScanContext, disc: Discovery, user_name: str, is_web: boo
             "SSH login. Remove the key and audit auth logs.",
             file_meta(ctx, disc, st, keys=len(keys))))
     elif st is not None and ctx.recent(max(st.st_mtime, st.st_ctime)):
+        prints = ", ".join(fingerprint(line) for _, _, line in keys[:5])
         findings.append(Finding(
-            NAME, "ACCT-SSH-KEYS-RECENT", Severity.HIGH, Kind.COMPROMISE,
-            "authorized_keys of '{}' changed after --since".format(user_name), path, comments,
-            "Verify every key is yours.", file_meta(ctx, disc, st, keys=len(keys))))
+            NAME, "ACCT-SSH-KEYS-RECENT", Severity.MEDIUM, Kind.COMPROMISE,
+            "authorized_keys of '{}' changed after --since - verify every key".format(user_name),
+            path, comments, "Compare these fingerprints with your own keys "
+                            "(ssh-keygen -lf ~/.ssh/id_*.pub): " + prints,
+            file_meta(ctx, disc, st, keys=len(keys))))
     else:
         findings.append(Finding(
             NAME, "ACCT-SSH-KEYS", Severity.INFO, Kind.INFO,

@@ -89,6 +89,22 @@ def _configured_firewall(ctx: ScanContext) -> List[str]:
     return sorted(set(found))
 
 
+UFW_OPEN = re.compile(r"^(\d{1,5})(?::(\d{1,5}))?(?:/(?:tcp|udp))?\s+ALLOW(?: IN)?\s+Anywhere",
+                      re.M)
+
+
+def open_ports(ctx: ScanContext) -> Optional[Set[int]]:
+    """Ports ufw allows from anywhere (None when unknown: the firewall may block them)."""
+    status = run_tool(ctx, ["ufw", "status"], timeout=20) if ctx.live else None
+    if not status or "Status: active" not in status[1]:
+        return None
+    ports: Set[int] = set()
+    for start, end in UFW_OPEN.findall(status[1]):
+        low, high = int(start), int(end or start)
+        ports.update(p for p in RISKY_PORTS if low <= p <= high)
+    return ports
+
+
 def check_firewall(ctx: ScanContext) -> Tuple[List[Finding], bool]:
     live = _live_firewall(ctx) if ctx.live else None
     active = live if live is not None else _configured_firewall(ctx)
@@ -105,6 +121,7 @@ def check_firewall(ctx: ScanContext) -> Tuple[List[Finding], bool]:
 def check_listeners(ctx: ScanContext, disc: Discovery, firewalled: bool) -> List[Finding]:
     if not ctx.live:
         return []
+    allowed_ports = open_ports(ctx)
     owners = {inode: proc for proc in disc.processes for inode in proc.socket_inodes}
     findings, seen = [], set()
     for path in network.PROC_NET:
@@ -115,15 +132,21 @@ def check_listeners(ctx: ScanContext, disc: Discovery, firewalled: bool) -> List
                 continue
             seen.add(sock.local_port)
             service, severity = RISKY_PORTS[sock.local_port]
-            if firewalled and severity > L:
-                severity = Severity(severity - 1)
+            allowed = sock.local_port in allowed_ports if allowed_ports is not None else None
+            if firewalled and severity > L and allowed is not True:
+                severity = Severity(severity - 1)     # probably filtered by the firewall
+            protected = sock.local_port == 6379 and _redis_password_set(ctx)
+            if protected and severity > M:
+                severity = M                          # exposed, but not unauthenticated
             proc = owners.get(sock.inode)
             findings.append(_f(
                 "BASE-EXPOSED-SERVICE", severity, EXPO if severity >= H else HARD,
                 "{} listening on all interfaces (port {})".format(service, sock.local_port),
                 evidence="{}:{} {}".format(sock.local_ip, sock.local_port,
                                           "pid={} {}".format(proc.pid, proc.name) if proc else ""),
-                detail="Bind it to 127.0.0.1 or restrict it with a firewall."))
+                detail="Bind it to 127.0.0.1 or restrict it with a firewall."
+                       + (" The firewall allows this port from anywhere." if allowed else "")
+                       + (" A password (requirepass) is configured." if protected else "")))
     return findings
 
 
@@ -174,11 +197,11 @@ def check_ssh(ctx: ScanContext) -> List[Finding]:
         findings.append(_f("BASE-SSH-EMPTY-PASSWORDS", H, EXPO, "sshd permits empty passwords",
                            empty[1], "PermitEmptyPasswords yes"))
     root = cfg.get("permitrootlogin", ("prohibit-password", ""))
-    if root[0] == "yes":
+    password = cfg.get("passwordauthentication", ("yes (default)", ""))
+    if root[0] == "yes" and password[0].startswith("yes"):
         findings.append(_f("BASE-SSH-ROOT-LOGIN", M, HARD, "sshd allows root login with a password",
                            root[1], "PermitRootLogin yes",
                            "Use 'prohibit-password' and key-based logins for root."))
-    password = cfg.get("passwordauthentication", ("yes (default)", ""))
     if password[0].startswith("yes"):
         findings.append(_f("BASE-SSH-PASSWORD-AUTH", L, HARD, "sshd accepts password logins",
                            password[1], "PasswordAuthentication " + password[0],
@@ -221,6 +244,14 @@ def check_docker_api(ctx: ScanContext) -> List[Finding]:
                            "docker.sock is world-writable (any user, incl. the web user, is root)",
                            "/var/run/docker.sock", stat.filemode(st.st_mode)))
     return findings
+
+
+REDIS_CONFIGS = ("/etc/redis/*.conf", "/etc/redis.conf", "/www/server/redis/redis.conf")
+
+
+def _redis_password_set(ctx: ScanContext) -> bool:
+    return any(re.search(r"^\s*requirepass\s+\S", ctx.fs.read_text(path, 512 * 1024) or "", re.M)
+               for pattern in REDIS_CONFIGS for path in ctx.fs.glob(pattern))
 
 
 def check_redis_config(ctx: ScanContext) -> List[Finding]:

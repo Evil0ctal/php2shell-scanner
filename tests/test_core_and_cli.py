@@ -187,3 +187,35 @@ def test_markdown_escaping_helpers():
     block = fenced("```\nbreak out")
     assert block[0] == "````text" and block[-1] == "````"
     assert "\x1b" not in code("\x1b[31m")
+
+
+def test_lower_priority_in_a_subprocess():
+    import subprocess
+    import sys as _sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = ("import os, sys; sys.path.insert(0, {!r}); "
+            "from php2shell_scanner.throttle import lower_priority; "
+            "applied = lower_priority(); print(os.nice(0), applied)").format(root)
+    out = subprocess.run([_sys.executable, "-c", code], stdout=subprocess.PIPE, check=True)
+    assert out.stdout.decode().startswith("19 ")
+
+
+def test_drop_cache_is_harmless(tree):
+    from php2shell_scanner.fs import drop_cache
+    real = tree.write("/var/log/big.log", "x" * 300000)
+    with open(real, "rb") as handle:
+        handle.read()
+        drop_cache(handle)          # no-op on macOS, fadvise on Linux; never raises
+    assert RootFS(tree.root).read_bytes("/var/log/big.log", 10) == b"x" * 10
+
+
+def test_auth_check_falls_back_to_messages_only_without_auth_log(tree, scan_env):
+    from php2shell_scanner.checks import auth_logs
+    line = ("Oct 21 09:05:00 web sshd[9]: Accepted publickey for www-data from 203.0.113.5 "
+            "port 7 ssh2\n")
+    tree.write("/var/log/messages", line)
+    ctx, disc = scan_env()
+    assert "AUTH-WEBUSER-LOGIN" in {f.rule for f in auth_logs.run(ctx, disc)}
+    tree.write("/var/log/auth.log", "Oct 21 09:00:00 web CRON[1]: noise\n")
+    ctx, disc = scan_env()
+    assert "AUTH-WEBUSER-LOGIN" not in {f.rule for f in auth_logs.run(ctx, disc)}

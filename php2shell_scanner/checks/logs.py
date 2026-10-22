@@ -13,6 +13,7 @@ from collections import Counter
 from typing import Dict, List, NamedTuple, Optional, Set
 
 from php2shell_scanner.checks.common import fmt_time
+from php2shell_scanner.checks.network import is_internal
 from php2shell_scanner.context import ScanContext, run_tool
 from php2shell_scanner.models import Discovery, Finding, Kind, Severity
 from php2shell_scanner.signatures import printable
@@ -261,12 +262,16 @@ def _aggregate_findings(state: State) -> List[Finding]:
                 meta={"ip": ip, "login_posts": count, "sql_page_hits": used}))
     if state.pma_sql_ips:
         top = state.pma_sql_ips.most_common(20)
+        local_only = all(is_internal(ip) for ip in state.pma_sql_ips)
         findings.append(Finding(
-            NAME, "LOG-PMA-SQL-USAGE", Severity.MEDIUM, Kind.ATTEMPT,
+            NAME, "LOG-PMA-SQL-USAGE", Severity.INFO if local_only else Severity.MEDIUM,
+            Kind.INFO if local_only else Kind.ATTEMPT,
             "phpMyAdmin SQL/import/privilege pages were used - confirm these IPs are yours",
             evidence=", ".join("{} ({}x)".format(ip, n) for ip, n in top[:5]),
-            detail="Attackers with phpMyAdmin access write webshells with SELECT ... INTO "
-                   "OUTFILE or the general_log trick and create MySQL accounts.",
+            detail=("Only local/private addresses (a panel proxy or an SSH tunnel): check "
+                    "who used it in the panel's own login log." if local_only else
+                    "Attackers with phpMyAdmin access write webshells with SELECT ... INTO "
+                    "OUTFILE or the general_log trick and create MySQL accounts."),
             meta={"ips": dict(top)}))
     for ip, count in state.oom_5xx.items():
         if count >= OOM_5XX_THRESHOLD:

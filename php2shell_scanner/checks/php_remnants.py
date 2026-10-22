@@ -12,7 +12,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 from php2shell_scanner.checks.common import file_meta
 from php2shell_scanner.context import ScanContext, run_tool
 from php2shell_scanner.discovery import FPM_CONF_GLOBS, NGINX_CONF_GLOBS, read_configs
-from php2shell_scanner.fs import ELF_MAGIC
+from php2shell_scanner.fs import ELF_MAGIC, drop_cache
 from php2shell_scanner.models import Discovery, Finding, Kind, Severity
 from php2shell_scanner.signatures import printable, scan
 from php2shell_scanner.signatures import webshell as ws
@@ -58,14 +58,17 @@ def _version_from_binary(ctx: ScanContext, path: str) -> Optional[str]:
     try:
         with ctx.fs.open_binary(path) as handle:
             tail = b""
-            while True:
-                chunk = handle.read(CHUNK)
-                if not chunk:
-                    return None
-                found = VERSION_IN_BINARY.search(tail + chunk)
-                if found:
-                    return found.group(1).decode()
-                tail = chunk[-64:]
+            try:
+                while True:
+                    chunk = handle.read(CHUNK)
+                    if not chunk:
+                        return None
+                    found = VERSION_IN_BINARY.search(tail + chunk)
+                    if found:
+                        return found.group(1).decode()
+                    tail = chunk[-64:]
+            finally:
+                drop_cache(handle)
     except (OSError, ValueError):
         return None
 

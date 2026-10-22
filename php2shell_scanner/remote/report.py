@@ -21,8 +21,9 @@ ADVICE = {
                 "run `php2shell-scanner forensics` on the server to check for a compromise.",
     LIKELY: "Confirm on the server: `php -v` and the package changelog (distribution builds "
             "may contain the backported fix). Run `php2shell-scanner forensics` there.",
-    UNKNOWN: "PHP is present but its version is hidden. Check `php -v` on the server or run "
-             "`php2shell-scanner forensics` locally.",
+    UNKNOWN: "The PHP version could not be determined remotely (hidden, or no PHP page was "
+             "reached - try --path). Check `php -v` on the server or run "
+             "`php2shell-scanner forensics` there.",
     UNREACHABLE: "Target did not answer; check the address, port and firewall.",
     NOT_VULNERABLE: "No affected PHP version observed.",
     NOT_PHP: "No PHP observed. If PHP sits behind a proxy/CDN, scan the origin directly.",

@@ -18,6 +18,7 @@ from php2shell_scanner.discovery import discover
 from php2shell_scanner.markdown import forensics_markdown
 from php2shell_scanner.models import Discovery, Finding, Severity
 from php2shell_scanner.report import TextReport, compute_verdict, to_json
+from php2shell_scanner.throttle import lower_priority
 
 LOG = logging.getLogger("php2shell_scanner")
 
@@ -47,6 +48,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
                         help="extra PHP session directory (repeatable)")
     parser.add_argument("--checks", metavar="A,B", help="run only these checks")
     parser.add_argument("--skip", metavar="A,B", help="skip these checks")
+    parser.add_argument("--no-throttle", action="store_true",
+                        help="run at normal CPU/IO priority (default: nice 19, lowest IO "
+                             "priority, page-cache friendly reads)")
     parser.add_argument("--no-exec", action="store_true",
                         help="never run external programs (dpkg/rpm/iptables/journalctl/php -v)")
     parser.add_argument("--max-file-size", type=positive_int, default=5, metavar="MB",
@@ -115,6 +119,10 @@ def run(args: argparse.Namespace) -> int:
     if not os.path.isdir(args.root):
         sys.stderr.write("--root {} is not a directory\n".format(args.root))
         return EXIT_USAGE
+    if not args.no_throttle:
+        applied = lower_priority()
+        LOG.info("running politely: %s (use --no-throttle for full speed)",
+                 ", ".join(applied) or "priority unchanged")
     ctx = make_context(
         root=args.root, since=args.since, allow_exec=not args.no_exec,
         max_file_size=max(1, args.max_file_size) * 1024 * 1024, max_files=args.max_files or 10**9,

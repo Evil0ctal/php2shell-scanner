@@ -80,7 +80,7 @@ LOG_DIRS = (
 )
 LOG_GLOBS = (
     "/var/log/php*.log*", "/var/log/php*-fpm*", "/var/log/php[0-9]*", "/var/log/modsec_audit.log*",
-    "/var/log/syslog*", "/var/log/messages*", "/www/server/php/*/var/log",
+    "/www/server/php/*/var/log",
     "/usr/local/php*/var/log", "/var/opt/remi/php*/log/php-fpm", "/var/www/vhosts/system/*/logs",
     "/home/*/logs", "/opt/cpanel/ea-php*/root/usr/var/log/php-fpm", "/var/log/plesk-php*-fpm",
     "/www/dk_project/runtime/run/php/*/log", "/home/*/public_html/error_log",

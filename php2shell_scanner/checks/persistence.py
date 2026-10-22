@@ -158,7 +158,7 @@ def check_systemd(ctx: ScanContext, disc: Discovery) -> List[Finding]:
                     NAME, "PERSIST-UNIT-TMP-BINARY", Severity.CRITICAL, Kind.COMPROMISE,
                     "systemd unit runs a binary from a temp/hidden directory", path,
                     printable(line), "", file_meta(ctx, disc, ctx.fs.lstat(path))))
-        if path.startswith(("/etc/", "/run/")) or "/.config/" in path:
+        if path.startswith("/etc/") or "/.config/" in path:
             st = ctx.fs.lstat(path)
             if st is not None and ctx.recent(max(st.st_mtime, st.st_ctime)):
                 findings.append(Finding(
