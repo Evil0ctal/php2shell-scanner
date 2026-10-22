@@ -133,8 +133,16 @@ BODY_RULES: List[LogRule] = [
     _rule("RESP-LONG-SESSID", H, A,
           "Abnormally long PHPSESSID issued by the server (heap memory leak indicator)",
           r"set-cookie:\s{0,4}phpsessid=[a-z0-9,\-]{64,}"),
+    # PHP's SAPI content-type parser trims at ';', ',' AND space (SAPI.c), and rfc1867
+    # locates the boundary with strpbrk(",;"). A multipart POST that uses ',' or a bare
+    # space instead of ';' therefore still parses, but slips past every WAF/IDS signature
+    # anchored on "; boundary=". Seeing the non-standard separator in a log is itself an
+    # evasion fingerprint. (dinosn/php-cve-2026-10961x-lab-poc, docs/WAF-BYPASS.md)
+    _rule("BODY-CT-SEPARATOR", M, A,
+          "multipart Content-Type using a non-standard separator (WAF-signature bypass)",
+          r"content-type:[ \t]{0,8}multipart/form-data(?:[ \t]{0,8},[ \t]{0,8}|[ \t]+)boundary="),
 ]
-BODY_TRIGGERS = ("php_session_upload_progress", "filename=", "phpsessid")
+BODY_TRIGGERS = ("php_session_upload_progress", "filename=", "phpsessid", "boundary=")
 
 UA_TOOLS = re.compile(r"antsword|cknife|caidao|behinder|godzilla|weevely|altman|chopper", re.I)
 UA_CRAWLER = re.compile(r"baiduspider|googlebot|bingbot|sogou|360spider|yandexbot", re.I)

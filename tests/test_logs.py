@@ -189,10 +189,19 @@ def test_parse_time_formats():
      "BODY-FILENAME-SERIALIZED"),
     ('Content-Disposition: form-data; name="PHPSESSID"', "BODY-SESSID-FIELD"),
     ("Set-Cookie: PHPSESSID=" + "a" * 80 + "; path=/", "RESP-LONG-SESSID"),
+    ("Content-Type: multipart/form-data, boundary=X", "BODY-CT-SEPARATOR"),
+    ("Content-Type: multipart/form-data,boundary=X", "BODY-CT-SEPARATOR"),
+    ("Content-Type: multipart/form-data boundary=X", "BODY-CT-SEPARATOR"),
 ])
 def test_request_body_and_response_iocs(line, rule):
     _, by_rule = run_lines([line])
     assert rule in by_rule
+
+
+def test_standard_multipart_separator_is_not_flagged():
+    # The legitimate "; boundary=" separator must never trip the evasion rule.
+    _, by_rule = run_lines(['Content-Type: multipart/form-data; boundary=----WebKitX'])
+    assert "BODY-CT-SEPARATOR" not in by_rule
 
 
 def test_sensitive_file_served_and_soft_404():

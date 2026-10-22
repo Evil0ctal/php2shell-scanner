@@ -1,0 +1,253 @@
+# ============================================================================
+# php2shell - Suricata / Snort IDS Rules
+# CVE-2026-109618 / CVE-2026-109619  ("php2shell")
+#
+# Detects exploitation attempts and reconnaissance for the PHP
+# session.upload_progress / rfc1867 multipart OOM-corruption class.
+#
+# SID range: 2026100 - 2026119
+#
+# Ported into php2shell-scanner from:
+#   - ikow/php2shell-poc                detection/php2shell.rules  (base rules)
+#   - dinosn/php-cve-2026-10961x-lab-poc docs/WAF-BYPASS.md        (bypass hardening)
+# and extended by the php2shell-scanner project (Evil0ctal).
+#
+# Design note - these rules match on the RAW request body / header buffers
+# (http.request_body, http.header), NOT on engine-parsed multipart parts and
+# NOT anchored on the "; boundary=" Content-Type form. That is deliberate: see
+# the "Content-Type separator bypass" section at the end. The plain substring
+# "multipart/form-data" still matches the comma/space separator variants.
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# REQUEST-SIDE DETECTION
+# --------------------------------------------------------------------------
+
+# SID 2026100 - PHP_SESSION_UPLOAD_PROGRESS in a multipart POST body.
+# Primary trigger for the session-based chains. Near-zero legitimate use in
+# modern applications. Raw-body match, so the comma/space Content-Type
+# separator bypass does not evade it.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL PHP_SESSION_UPLOAD_PROGRESS in multipart POST"; \
+    flow:established,to_server; \
+    http.method; content:"POST"; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"PHP_SESSION_UPLOAD_PROGRESS"; \
+    classtype:web-application-attack; \
+    sid:2026100; rev:2; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+    reference:cve,2026-109619; \
+    reference:url,github.com/ikow/php2shell-poc; \
+)
+
+# SID 2026107 - PHP_SESSION_UPLOAD_PROGRESS regardless of HTTP method.
+# PHP 8.4 request_parse_body() parses multipart/form-data on GET/PUT/PATCH/
+# DELETE too, so method-anchored rules (2026100) can be bypassed. This
+# companion fires on any method; keep both so 2026100 keeps its POST context.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL PHP_SESSION_UPLOAD_PROGRESS in multipart body (any method, PHP 8.4+)"; \
+    flow:established,to_server; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"PHP_SESSION_UPLOAD_PROGRESS"; \
+    classtype:web-application-attack; \
+    sid:2026107; rev:1; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109619; \
+    reference:url,github.com/dinosn/php-cve-2026-10961x-lab-poc; \
+)
+
+# SID 2026101 - PHPSESSID as a multipart form field (session fixation).
+# Normal browsers send PHPSESSID as a Cookie header, never as a POST field.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL PHPSESSID in multipart POST body (session fixation)"; \
+    flow:established,to_server; \
+    http.method; content:"POST"; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"name=|22|PHPSESSID|22|"; \
+    classtype:web-application-attack; \
+    sid:2026101; rev:1; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)
+
+# SID 2026102 - PHP code in a multipart upload filename (session injection).
+# The rfc1867 handler stores the filename raw in the session file. Combined
+# with any LFI this is pre-auth RCE and survives the 8.5.12 patch (Chain A).
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL PHP code in upload filename (session injection)"; \
+    flow:established,to_server; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"filename=|22|"; content:"<?"; distance:0; within:500; \
+    classtype:web-application-attack; \
+    sid:2026102; rev:2; \
+    metadata:cve CVE-2026-109618, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)
+
+# SID 2026103 - Serialized PHP object in a multipart filename (handler mismatch).
+# A pipe followed by O:/a:/C:/r: in the filename is the Chain C deserialization
+# gadget; __destruct fires even when the decode later fails.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL serialized object in upload filename (handler mismatch)"; \
+    flow:established,to_server; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"filename=|22|"; \
+    http.request_body; pcre:"/filename=\"[^\"]{0,200}?\|[OaCr]:\d+:/"; \
+    classtype:web-application-attack; \
+    sid:2026103; rev:2; \
+    metadata:cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109619; \
+)
+
+# SID 2026104 - Abnormally long filename in a multipart upload (session inflation).
+# 10KB+ filenames stored in the session file build a huge session that OOMs on
+# decode (Chain E setup).
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL oversized filename in multipart upload (session inflation)"; \
+    flow:established,to_server; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"PHP_SESSION_UPLOAD_PROGRESS"; \
+    http.request_body; content:"filename=|22|"; \
+    isdataat:10000,relative; \
+    classtype:web-application-attack; \
+    sid:2026104; rev:1; \
+    metadata:cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109619; \
+)
+
+# SID 2026105 - Chunked multipart POST (post_max_size bypass).
+# Missing Content-Length (chunked) skips PHP's post_max_size pre-check, allowing
+# an unbounded body to drive the OOM-corruption chain.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL chunked multipart POST (post_max_size bypass)"; \
+    flow:established,to_server; \
+    http.method; content:"POST"; \
+    http.content_type; content:"multipart/form-data"; \
+    http.header; content:"Transfer-Encoding"; nocase; content:"chunked"; nocase; \
+    classtype:web-application-attack; \
+    sid:2026105; rev:2; \
+    metadata:cve CVE-2026-109618, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)
+
+# SID 2026106 - Session file path in URL parameters (LFI trigger).
+# The attacker includes the poisoned session file via LFI after injection.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL session file path in URL (LFI exploitation)"; \
+    flow:established,to_server; \
+    http.uri; content:"/sess_"; \
+    http.uri; pcre:"/(?:\/tmp\/sessions|\/var\/lib\/php\/sessions?)\/sess_/i"; \
+    classtype:web-application-attack; \
+    sid:2026106; rev:1; \
+    metadata:cve CVE-2026-109618, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)
+
+# SID 2026108 - multipart/form-data Content-Type using a non-standard separator.
+# PHP's SAPI parser trims the media type at ';', ',' and space; a request using
+# "multipart/form-data, boundary=" or "multipart/form-data boundary=" still
+# parses but evades every "; boundary="-anchored signature. The separator alone
+# is an evasion fingerprint. (dinosn docs/WAF-BYPASS.md)
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL multipart Content-Type with non-standard separator (WAF-signature bypass)"; \
+    flow:established,to_server; \
+    http.header; content:"multipart/form-data"; nocase; \
+    http.header; pcre:"/multipart\/form-data(?:\s*,\s*|\s+)boundary=/i"; \
+    classtype:web-application-attack; \
+    sid:2026108; rev:1; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:url,github.com/dinosn/php-cve-2026-10961x-lab-poc; \
+)
+
+# --------------------------------------------------------------------------
+# RESPONSE-SIDE DETECTION
+# --------------------------------------------------------------------------
+
+# SID 2026110 - PHP OOM error in the HTTP response (exploitation indicator).
+alert http $HOME_NET any -> $EXTERNAL_NET any ( \
+    msg:"PHP2SHELL PHP OOM error in response (exploitation indicator)"; \
+    flow:established,to_client; \
+    http.response_body; content:"Allowed memory size"; \
+    content:"exhausted"; distance:0; within:100; \
+    classtype:web-application-attack; \
+    sid:2026110; rev:1; \
+    metadata:cve CVE-2026-109618, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)
+
+# SID 2026111 - Session destruction failure in the response (Chain E confirmed).
+alert http $HOME_NET any -> $EXTERNAL_NET any ( \
+    msg:"PHP2SHELL session destruction failure (stale state exploitation)"; \
+    flow:established,to_client; \
+    http.response_body; content:"Session object destruction failed"; \
+    classtype:web-application-attack; \
+    sid:2026111; rev:1; \
+    metadata:cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109619; \
+)
+
+# SID 2026112 - Anomalous PHPSESSID in a response cookie (heap memory leak).
+# Normal session IDs are 26-32 chars; 64+ chars of [a-z0-9,-] signals a freed-
+# heap disclosure via Set-Cookie (Sansec). The lab leak is URL-encoded, hence
+# the comma class.
+alert http $HOME_NET any -> $EXTERNAL_NET any ( \
+    msg:"PHP2SHELL anomalous PHPSESSID in response (heap memory leak)"; \
+    flow:established,to_client; \
+    http.header; content:"Set-Cookie"; content:"PHPSESSID="; \
+    pcre:"/Set-Cookie:\s*PHPSESSID=[a-zA-Z0-9,%-]{64,}/"; \
+    classtype:web-application-attack; \
+    sid:2026112; rev:2; \
+    metadata:cve CVE-2026-109618, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+    reference:url,sansec.io/research/php2shell; \
+)
+
+# --------------------------------------------------------------------------
+# RECONNAISSANCE DETECTION
+# --------------------------------------------------------------------------
+
+# SID 2026115 - Small multipart probe with upload progress (feature check).
+# Track by_src WITHIN the sliding window (not by_dst across flows); 3 in 60s.
+alert http $EXTERNAL_NET any -> $HOME_NET any ( \
+    msg:"PHP2SHELL reconnaissance probe (small upload progress request)"; \
+    flow:established,to_server; \
+    http.content_type; content:"multipart/form-data"; \
+    http.request_body; content:"PHP_SESSION_UPLOAD_PROGRESS"; \
+    dsize:<2000; \
+    threshold:type both, track by_src, count 3, seconds 60; \
+    classtype:web-application-activity; \
+    sid:2026115; rev:2; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+    reference:cve,2026-109619; \
+)
+
+# SID 2026116 - Vulnerable PHP version in a response header (asset inventory).
+# Fixed in 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12; everything below is affected and
+# 8.0-8.1 / 7.x / 5.x are EOL with no official fix.
+alert http $HOME_NET any -> $EXTERNAL_NET any ( \
+    msg:"PHP2SHELL vulnerable PHP version exposed in response header"; \
+    flow:established,to_client; \
+    http.header; content:"X-Powered-By"; content:"PHP/"; \
+    pcre:"/X-Powered-By:\s*PHP\/(?:5\.|7\.|8\.[01]\.|8\.2\.(?:[0-9]|[12][0-9]|3[0-4])\b|8\.3\.(?:[0-9]|[12][0-9]|3[0-5])\b|8\.4\.(?:[0-9]|1[0-9]|2[0-6])\b|8\.5\.(?:[0-9]|1[01])\b)/"; \
+    threshold:type limit, track by_src, count 1, seconds 3600; \
+    classtype:policy-violation; \
+    sid:2026116; rev:1; \
+    metadata:cve CVE-2026-109618, cve CVE-2026-109619, \
+             created_at 2026_10_21, updated_at 2026_10_21; \
+    reference:cve,2026-109618; \
+)

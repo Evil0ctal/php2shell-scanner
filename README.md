@@ -20,6 +20,7 @@ Repository: <https://github.com/Evil0ctal/php2shell-scanner> · License: [MIT](L
 | 1. Detect | `php2shell-scanner scan <url / domain / ip:port>` | *Is this server vulnerable?* — remote and **non-destructive** |
 | 2. Investigate | `sudo php2shell-scanner forensics` (on the server) | *Was it already compromised?* — works even after PHP / phpMyAdmin were uninstalled |
 | 3. Report | automatic | Terminal summary, a **Markdown report** to download/share, optional JSON |
+| 4. Monitor / block | [`detection/`](detection/) rules | *Catch it going forward* — drop-in Suricata, Sigma, ModSecurity and OpenResty rules |
 
 - **Zero dependencies** — Python 3.6.1+ standard library only; one portable `.pyz` file.
 - **Safe by design** — the remote scanner never exploits anything; forensics is strictly
