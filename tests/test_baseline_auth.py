@@ -1,7 +1,8 @@
 """Security baseline and auth-log checks."""
-import pytest
 
 import json
+
+import pytest
 
 from php2shell_scanner.checks import auth_logs, baseline
 from php2shell_scanner.models import Kind, Severity
