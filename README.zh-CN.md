@@ -19,7 +19,7 @@
 | 1. 检测 | `php2shell-scanner scan <网址 / 域名 / IP:端口>` | *这台服务器有没有漏洞？* 远程、**非破坏性**检测 |
 | 2. 取证 | `sudo php2shell-scanner forensics`（在服务器上运行） | *是否已经被入侵？* 即使 PHP / phpMyAdmin 已卸载也能查 |
 | 3. 报告 | 自动生成 | 终端摘要、可下载分享的 **Markdown 报告**，以及可选的 JSON |
-| 4. 监控 / 拦截 | [`detection/`](detection/) 规则 | *持续防护* —— 可直接部署的 Suricata、Sigma、ModSecurity、OpenResty 规则 |
+| 4. 监控 / 拦截 | [`detection/`](php2shell_scanner/detection/) 规则（已内置；`php2shell-scanner rules -o DIR` 导出） | *持续防护* —— 可直接部署的 Suricata、Sigma、ModSecurity、OpenResty 规则 |
 
 - **零依赖**：只用 Python 3.6.1+ 标准库，可打包成单个 `.pyz` 文件。
 - **安全设计**：远程扫描绝不进行利用；取证模式严格只读（以 `O_NOATIME` 打开文件、不修改

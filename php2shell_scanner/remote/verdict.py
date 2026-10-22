@@ -200,6 +200,12 @@ def evaluate(url: str, data: ProbeData, requests: int) -> TargetResult:
         exposures.insert(0, "Malformed oversized PHPSESSID issued (possible heap memory leak, "
                             "CVE-2026-109618 symptom): " + "; ".join(data.long_session_ids[:3]))
     versions = _version_sources(data)
+    context = _context(data, versions)
+    if status == NOT_VULNERABLE:
+        context.append(
+            "Patched for the CVEs, but note: upload_progress stores the upload filename "
+            "verbatim in the session file on every PHP version (Chain A), so if any application "
+            "on this host has a local file inclusion, that path can still reach code execution. "
+            "This does not change the verdict - it is a reason to also fix LFI sinks.")
     return TargetResult(url, status, _confidence(status, data, versions), dict(versions),
-                        reasons, _mitigations(data), exposures, _context(data, versions),
-                        requests)
+                        reasons, _mitigations(data), exposures, context, requests)

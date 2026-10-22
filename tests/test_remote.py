@@ -133,6 +133,20 @@ def test_patched_header_version(server):
     assert scan(server).status == v.NOT_VULNERABLE
 
 
+def test_patched_host_gets_chain_a_lfi_caveat(server):
+    server.behavior["powered"] = "PHP/8.3.36"
+    result = scan(server)
+    assert result.status == v.NOT_VULNERABLE
+    assert any("local file inclusion" in c for c in result.context)
+
+
+def test_vulnerable_host_has_no_chain_a_caveat(server):
+    server.behavior["powered"] = "PHP/8.2.20"
+    result = scan(server)
+    assert result.status == v.VULNERABLE
+    assert not any("local file inclusion" in c for c in result.context)
+
+
 def test_distribution_backport_is_only_likely(server):
     server.behavior["powered"] = "PHP/8.1.2-1ubuntu2.14"
     result = scan(server)

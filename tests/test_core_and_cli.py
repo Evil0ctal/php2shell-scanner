@@ -219,3 +219,32 @@ def test_auth_check_falls_back_to_messages_only_without_auth_log(tree, scan_env)
     tree.write("/var/log/auth.log", "Oct 21 09:00:00 web CRON[1]: noise\n")
     ctx, disc = scan_env()
     assert "AUTH-WEBUSER-LOGIN" not in {f.rule for f in auth_logs.run(ctx, disc)}
+
+
+# ------------------------------------------------------------------- rules cmd
+def test_rules_manifest_matches_packaged_files():
+    import php2shell_scanner
+    from php2shell_scanner import rules_cli
+    det_dir = os.path.join(os.path.dirname(php2shell_scanner.__file__), "detection")
+    on_disk = {n for n in os.listdir(det_dir) if not n.startswith(("_", "."))}
+    assert set(rules_cli.DETECTION_FILES) == on_disk
+
+
+def test_rules_extracts_all_files(tmp_path, capsys):
+    from php2shell_scanner import rules_cli
+    out = tmp_path / "det"
+    assert cli.main(["rules", "-o", str(out)]) == 0
+    written = {p.name for p in out.iterdir()}
+    assert written == set(rules_cli.DETECTION_FILES)
+    assert "wrote" in capsys.readouterr().out.lower()
+    # Content is the real rule text, not empty.
+    assert "CVE-2026-109618" in (out / "php2shell.rules").read_text()
+
+
+def test_rules_list_and_stdout_and_bad_name(capsys):
+    assert cli.main(["rules", "--list"]) == 0
+    listed = capsys.readouterr().out.split()
+    assert "php2shell.yaml" in listed
+    assert cli.main(["rules", "--stdout", "modsecurity.conf"]) == 0
+    assert "SecRule" in capsys.readouterr().out
+    assert cli.main(["rules", "--stdout", "nope.conf"]) == cli.EXIT_USAGE

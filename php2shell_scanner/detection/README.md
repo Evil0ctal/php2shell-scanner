@@ -30,6 +30,15 @@ included here or anywhere in this project.
 
 ## Quick start
 
+These files ship inside the single-file build. To extract them on a server that
+only has the `.pyz`:
+
+```bash
+python3 php2shell-scanner.pyz rules -o php2shell-detection   # writes all files here
+python3 php2shell-scanner.pyz rules --list                   # list bundled files
+python3 php2shell-scanner.pyz rules --stdout php2shell.rules # print one to stdout
+```
+
 **Suricata**
 ```bash
 cp php2shell.rules /etc/suricata/rules/
